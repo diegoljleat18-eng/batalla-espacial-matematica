@@ -1,7 +1,12 @@
 import express from 'express';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
-const app=express(); const http=createServer(app); const io=new Server(http); app.use(express.static('public'));
+const app=express(); const http=createServer(app); const io=new Server(http);
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const publicDir=path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+app.use(express.static(publicDir));
+app.get('/', (_req,res)=>res.sendFile(path.join(publicDir,'index.html')));
 const rooms=new Map();
 const question=(level)=>{const max=10+level*10;let a=1+Math.floor(Math.random()*max),b=1+Math.floor(Math.random()*max),op=['+','-','×','÷'][Math.floor(Math.random()*Math.min(4,level+1))],answer;if(op==='-'){if(b>a)[a,b]=[b,a];answer=a-b;}else if(op==='×'){a=1+Math.floor(Math.random()*(5+level*2));b=1+Math.floor(Math.random()*10);answer=a*b;}else if(op==='÷'){b=1+Math.floor(Math.random()*10);answer=1+Math.floor(Math.random()*(5+level*2));a=b*answer;}else answer=a+b;return {text:`${a} ${op} ${b} = ?`,answer};};
 function state(room){return {code:room.code,started:room.started,round:room.round,total:room.total,level:Math.min(5,1+Math.floor((room.round-1)/5)),players:[...room.players.values()].map(p=>({id:p.id,name:p.name,score:p.score,shield:p.shield,answered:p.answered})),question:room.started?room.question.text:null,remaining:room.started?Math.max(0,Math.ceil((room.deadline-Date.now())/1000)):null};}
