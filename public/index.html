@@ -20,9 +20,19 @@ function draw(now){const dt=Math.min(2.5,(now-lastFrame)/16.67);lastFrame=now;re
 ctx.fillStyle='#03091b';ctx.fillRect(0,0,660,340);
 ctx.fillStyle='#d6efff';for(const s of stars){s.y+=.35*dt;if(s.y>340)s.y=0;ctx.globalAlpha=.3+s.r/3;ctx.fillRect(s.x,s.y,s.r,s.r)}ctx.globalAlpha=1;
 if(!$('game').classList.contains('hidden')){shipX=Math.max(28,Math.min(632,shipX+held*6*dt));
-for(const t of targets){ctx.save();ctx.translate(t.x,t.y);ctx.fillStyle=t.dead?'#475569':'#f472b6';ctx.shadowColor='#fb7185';ctx.shadowBlur=9;ctx.beginPath();ctx.moveTo(0,21);ctx.lineTo(-50,-15);ctx.lineTo(-22,-8);ctx.lineTo(0,-24);ctx.lineTo(22,-8);ctx.lineTo(50,-15);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#081129';ctx.fillRect(-35,-6,70,30);ctx.fillStyle='#fff';ctx.font='bold 25px system-ui';ctx.textAlign='center';ctx.fillText(String(t.value),0,17);ctx.restore()}
+for(const t of targets){ctx.save();ctx.translate(t.x,t.y);ctx.fillStyle=t.dead?'#475569':'#f472b6';ctx.shadowColor='#fb7185';ctx.shadowBlur=9;ctx.beginPath();ctx.moveTo(0,21);ctx.lineTo(-50,-15);ctx.lineTo(-22,-8);ctx.lineTo(0,-24);ctx.lineTo(22,-8);ctx.lineTo(50,-15);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#081129';ctx.fillRect(-39,-10,78,36);ctx.strokeStyle='#fef08a';ctx.lineWidth=2;ctx.strokeRect(-39,-10,78,36);ctx.fillStyle='#fff';ctx.font='bold 28px system-ui';ctx.textAlign='center';ctx.fillText(String(t.value),0,17);ctx.restore()}
 for(const s of shots){const dx=s.targetX-s.x,dy=s.targetY-s.y,d=Math.hypot(dx,dy);if(d<18){s.dead=true;blast(s.targetX,s.targetY)}else{s.x+=dx/d*15*dt;s.y+=dy/d*15*dt}ctx.fillStyle='#67e8f9';ctx.shadowColor='#22d3ee';ctx.shadowBlur=14;ctx.beginPath();ctx.arc(s.x,s.y,6,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0}shots=shots.filter(s=>!s.dead);
-ctx.save();ctx.translate(shipX,295);ctx.shadowColor='#22d3ee';ctx.shadowBlur=16;ctx.fillStyle='#22d3ee';ctx.beginPath();ctx.moveTo(0,-28);ctx.lineTo(-24,19);ctx.lineTo(0,11);ctx.lineTo(24,19);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#f59e0b';ctx.beginPath();ctx.moveTo(-7,18);ctx.lineTo(0,33+Math.random()*9);ctx.lineTo(7,18);ctx.fill();ctx.fillStyle='#fff';ctx.fillRect(-4,-9,8,13);ctx.restore();}
+ctx.save();ctx.translate(shipX,286);
+// Llamas animadas y propulsión
+const flame=26+Math.random()*19;ctx.shadowColor='#fb923c';ctx.shadowBlur=18;ctx.fillStyle='#ef4444';ctx.beginPath();ctx.moveTo(-12,34);ctx.lineTo(0,flame+33);ctx.lineTo(12,34);ctx.closePath();ctx.fill();ctx.fillStyle='#fef08a';ctx.beginPath();ctx.moveTo(-6,33);ctx.lineTo(0,flame+19);ctx.lineTo(6,33);ctx.fill();ctx.shadowBlur=0;
+// Aletas del cohete
+ctx.fillStyle='#dc2626';ctx.beginPath();ctx.moveTo(-15,13);ctx.lineTo(-32,38);ctx.lineTo(-12,32);ctx.closePath();ctx.fill();ctx.beginPath();ctx.moveTo(15,13);ctx.lineTo(32,38);ctx.lineTo(12,32);ctx.closePath();ctx.fill();
+// Cuerpo metálico y punta
+const hull=ctx.createLinearGradient(-18,0,18,0);hull.addColorStop(0,'#64748b');hull.addColorStop(.3,'#f8fafc');hull.addColorStop(.7,'#cbd5e1');hull.addColorStop(1,'#64748b');ctx.fillStyle=hull;ctx.beginPath();ctx.moveTo(0,-52);ctx.bezierCurveTo(-16,-37,-19,-13,-16,34);ctx.lineTo(16,34);ctx.bezierCurveTo(19,-13,16,-37,0,-52);ctx.closePath();ctx.fill();ctx.strokeStyle='#334155';ctx.lineWidth=2;ctx.stroke();
+// Cono y ventanilla
+ctx.fillStyle='#ef4444';ctx.beginPath();ctx.moveTo(0,-52);ctx.quadraticCurveTo(-11,-41,-14,-29);ctx.lineTo(14,-29);ctx.quadraticCurveTo(11,-41,0,-52);ctx.fill();
+ctx.fillStyle='#0e7490';ctx.beginPath();ctx.arc(0,-13,10,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#e0f2fe';ctx.lineWidth=3;ctx.stroke();ctx.fillStyle='#a5f3fc';ctx.beginPath();ctx.arc(-3,-16,3,0,Math.PI*2);ctx.fill();
+ctx.fillStyle='#dc2626';ctx.fillRect(-13,24,26,7);ctx.restore();}
 for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;ctx.globalAlpha=Math.max(0,p.life/28);ctx.fillStyle=p.life%2>1?'#fbbf24':'#fb7185';ctx.fillRect(p.x,p.y,5,5)}ctx.globalAlpha=1;particles=particles.filter(p=>p.life>0);
 }requestAnimationFrame(draw);updateAmmo();
 </script></body></html>
