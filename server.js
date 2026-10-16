@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const publicDir=path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 app.use(express.static(publicDir));
 app.get('/', (_req,res)=>res.sendFile(path.join(publicDir,'index.html')));
+app.get('/health',(_req,res)=>res.status(200).json({ok:true,service:'juegos-matematicos',games:['galaxia','math-rush'],uptime:Math.round(process.uptime())}));
 const rooms=new Map();
 const question=(level)=>{const max=10+level*10;let a=1+Math.floor(Math.random()*max),b=1+Math.floor(Math.random()*max),op=['+','-','×','÷'][Math.floor(Math.random()*Math.min(4,level+1))],answer;if(op==='-'){if(b>a)[a,b]=[b,a];answer=a-b;}else if(op==='×'){a=1+Math.floor(Math.random()*(5+level*2));b=1+Math.floor(Math.random()*10);answer=a*b;}else if(op==='÷'){b=1+Math.floor(Math.random()*10);answer=1+Math.floor(Math.random()*(5+level*2));a=b*answer;}else answer=a+b;return {text:`${a} ${op} ${b} = ?`,answer};};
 function state(room){return {code:room.code,started:room.started,round:room.round,total:room.total,level:Math.min(5,1+Math.floor((room.round-1)/5)),players:[...room.players.values()].map(p=>({id:p.id,name:p.name,score:p.score,shield:p.shield,correct:p.correct,streak:p.streak,answered:p.answered})),question:room.started?room.question.text:null,remaining:room.started?Math.max(0,Math.ceil((room.deadline-Date.now())/1000)):null};}
@@ -34,4 +35,5 @@ socket.on('answer',(choice,cb)=>{const r=rushRooms.get(socket.data.rush),p=r?.pl
 socket.on('disconnect',()=>{const r=rushRooms.get(socket.data.rush);if(!r)return;r.players.delete(socket.id);if(r.host===socket.id){clearTimeout(r.timer);rushRooms.delete(r.code);rushIO.to(r.code).emit('closed')}else rushEmit(r)});
 });
 
-http.listen(process.env.PORT||3000,()=>console.log('Juego listo en puerto '+(process.env.PORT||3000)));
+const port=Number(process.env.PORT)||3000;
+http.listen(port,'0.0.0.0',()=>console.log('Juegos matemáticos listos en puerto '+port));
