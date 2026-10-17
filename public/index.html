@@ -11,10 +11,10 @@
 <div class="arena"><canvas id="battle" width="900" height="490" aria-label="Campo de batalla: dispara a los ovnis que muestran respuestas matemáticas"></canvas><div class="questionOverlay"><small>OBJETIVO MATEMÁTICO</small><strong id="question"></strong></div></div>
 <div class="controls"><div class="row"><button id="left" aria-label="Mover a la izquierda">◀</button><button id="right" aria-label="Mover a la derecha">▶</button></div><button id="fire">⚡ DISPARAR ∞</button></div><p class="help">Flechas para pilotar · ESPACIO para disparar · Mantén presionado DISPARAR para disparos infinitos · ¡Esquiva meteoritos o perderás vidas! · También puedes tocar un OVNI</p><p id="feedback" class="status"></p></div>
 <div id="results" class="result hidden"></div><h3 class="sectiontitle">🏆 Escuadrón · clasificación en vivo</h3><div id="players" class="players"></div></section>
-<p id="error" class="status"></p><div class="soundbar"><button id="music" class="secondary">🎛️ Activar música futurista</button><button id="sound">🔊 Efectos activados</button></div><p class="center muted" style="font-size:11px">Música electrónica futurista original: sintetizadores, pulsos digitales y ambiente de ciencia ficción.</p>
+<p id="error" class="status"></p><div class="soundbar"><button id="music" class="secondary">🎛️ Activar música futurista</button><button id="sound">🔊 Efectos activados</button></div><p class="center muted" style="font-size:11px">Banda sonora galáctica original: atmósferas espaciales, sintetizadores estelares y pulsos cinematográficos.</p>
 </main><script src="/socket.io/socket.io.js"></script><script>
 const $=id=>document.getElementById(id),socket=io();let me='',host=false,answered=false,currentRound=0,gameActive=false,targets=[],bullets=[],enemyBullets=[],meteors=[],sparks=[],scoreHits=0,shipX=450,keys={left:false,right:false,fire:false},lastFire=0,clock=0,latestState=null;
-let audio=null,sound=true,musicOn=false,musicTimer=null,musicStep=0,musicBpm=124,defeatPlayed=false,lastBonusStreak=0,lastMeteorSpawn=0,lastMeteorCollision=0;
+let audio=null,sound=true,musicOn=false,musicTimer=null,musicStep=0,musicBpm=112,defeatPlayed=false,lastBonusStreak=0,lastMeteorSpawn=0,lastMeteorCollision=0;
 function initAudio(){try{audio??=new(window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume()}catch{}}
 function tone(freq,dur=.12,type='sine',volume=.06,when=0){if(!audio)return;try{const t=audio.currentTime+when,o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);g.gain.setValueAtTime(volume, t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+dur+.02)}catch{}}
 function laserSound(){if(!sound)return;tone(900,.09,'sawtooth',.025);tone(360,.13,'triangle',.02,.035)}
@@ -22,22 +22,28 @@ function boom(){if(!sound)return;tone(80,.3,'sawtooth',.07);tone(48,.4,'triangle
 function wrongAnswerSound(){if(!sound)return;tone(370,.13,'square',.065);tone(277,.17,'square',.065,.13);tone(185,.28,'sawtooth',.055,.28)}
 function defeatSound(){if(!sound)return;[440,349.23,261.63,196,130.81].forEach((f,i)=>tone(f,.4,'sawtooth',.065,i*.2));tone(65,1.25,'triangle',.095,.65)}
 function drum(freq,dur,volume,when=0){if(!audio)return;try{const t=audio.currentTime+when,o=audio.createOscillator(),g=audio.createGain();o.type='sine';o.frequency.setValueAtTime(freq,t);o.frequency.exponentialRampToValueAtTime(Math.max(35,freq*.38),t+dur);g.gain.setValueAtTime(volume,t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+dur+.02)}catch{}}
+// Banda sonora espacial original: sintetizadores ambientales, secuencias estelares y pulso cinematográfico.
+function spaceNote(freq,duration,volume=.014,when=0,shape='sine',detune=0){if(!audio)return;try{const t=audio.currentTime+when,o=audio.createOscillator(),g=audio.createGain(),filter=audio.createBiquadFilter();o.type=shape;o.frequency.setValueAtTime(freq,t);o.detune.value=detune;filter.type='lowpass';filter.frequency.value=shape==='sawtooth'?1100:2500;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(volume,t+.045);g.gain.exponentialRampToValueAtTime(.0001,t+duration);o.connect(filter);filter.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+duration+.03)}catch{}}
+function cosmicSweep(when=0){if(!audio)return;try{const t=audio.currentTime+when,o=audio.createOscillator(),g=audio.createGain(),f=audio.createBiquadFilter();o.type='sawtooth';o.frequency.setValueAtTime(110,t);o.frequency.exponentialRampToValueAtTime(850,t+1.8);f.type='lowpass';f.frequency.setValueAtTime(280,t);f.frequency.exponentialRampToValueAtTime(2100,t+1.8);g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.008,t+.4);g.gain.exponentialRampToValueAtTime(.0001,t+2.4);o.connect(f);f.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+2.5)}catch{}}
 function musicTick(){if(!musicOn||!audio)return;
-const n=musicStep++,step=60/musicBpm/2;
-const bass=[55,55,65.41,55,49,49,73.42,65.41];
-const arp=[220,329.63,440,659.25,261.63,392,523.25,783.99,196,293.66,392,587.33,246.94,369.99,493.88,739.99];
-const note=arp[n%arp.length],root=bass[Math.floor(n/4)%bass.length];
-if(n%2===0){drum(115,.16,.085);tone(root,.25,'sawtooth',.025)}
-if(n%4===2)drum(185,.085,.032);
-tone(note,step*.82,'square',.012);
-tone(note*1.005,step*.74,'sine',.01);
-if(n%4===3)tone(1900,.025,'square',.004);
-if(n%16===0){tone(root*2,step*12,'sine',.016);tone(root*3,step*12,'triangle',.009)}
-if(n%8===7)tone(note*2,.11,'sine',.012);
+const n=musicStep++,step=60/musicBpm/2,level=Math.min(5,Math.ceil(Math.max(1,currentRound)/5));
+const roots=[55,49,65.41,58.27],root=roots[Math.floor(n/16)%4];
+const scale=[0,7,12,15,19,24,19,15,12,7,3,12,19,15,7,3];
+const note=root*4*Math.pow(2,scale[n%16]/12);
+if(n%2===0){drum(65,.28,.045);spaceNote(root,.38,.024,0,'sawtooth')}
+if(n%4===2)drum(155,.12,.018);
+spaceNote(note,step*.95,.011,0,'triangle');
+spaceNote(note*2,step*.72,.004,.035,'sine',4);
+if(n%4===3)spaceNote(1650,.075,.003,0,'square');
+if(n%8===0){spaceNote(root*2,step*9,.013,0,'sine');spaceNote(root*3,step*8,.007,.06,'triangle',-5)}
+if(n%16===8)spaceNote(root*1.5,step*7,.008,0,'sine');
+if(n%32===0)cosmicSweep();
+if(level>=3&&n%4===1)spaceNote(note/2,step*.65,.008,0,'sawtooth');
+if(level>=5&&n%2===1)spaceNote(note*1.5,step*.35,.004,0,'triangle');
 }
 function restartMusicTempo(){if(!musicOn)return;clearInterval(musicTimer);musicTimer=setInterval(musicTick,60000/musicBpm/2)}
 function startMusic(){if(musicOn)return;initAudio();if(!audio)return;musicOn=true;musicStep=0;musicTick();restartMusicTempo();$('music').textContent='⏸ Pausar banda sonora'}
-$('music').onclick=()=>{initAudio();if(!musicOn)startMusic();else{musicOn=false;clearInterval(musicTimer);$('music').textContent='🎼 Activar banda sonora épica'}};
+$('music').onclick=()=>{initAudio();if(!musicOn)startMusic();else{musicOn=false;clearInterval(musicTimer);$('music').textContent='🌌 Activar música galáctica'}};
 $('sound').onclick=()=>{initAudio();sound=!sound;$('sound').textContent=sound?'🔊 Efectos activados':'🔇 Efectos desactivados'};
 function error(s){$('error').textContent=s;tone(170,.3)}
 function waitForServer(){if(socket.connected)return Promise.resolve();socket.connect();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{cleanup();reject(new Error('Servidor sin conexión'))},18000);function ok(){cleanup();resolve()}function cleanup(){clearTimeout(timer);socket.off('connect',ok)}socket.on('connect',ok)})}
