@@ -14,7 +14,7 @@
 <p id="error" class="status"></p><div class="soundbar"><button id="music" class="secondary">🎛️ Activar música futurista</button><button id="sound">🔊 Efectos activados</button></div><p class="center muted" style="font-size:11px">Banda sonora galáctica original: atmósferas espaciales, sintetizadores estelares y pulsos cinematográficos.</p>
 </main><script src="/socket.io/socket.io.js"></script><script>
 const $=id=>document.getElementById(id),socket=io();let me='',host=false,answered=false,currentRound=0,gameActive=false,targets=[],bullets=[],enemyBullets=[],meteors=[],sparks=[],scoreHits=0,shipX=450,keys={left:false,right:false,fire:false},lastFire=0,clock=0,latestState=null;
-let audio=null,sound=true,musicOn=false,musicTimer=null,musicStep=0,musicBpm=112,defeatPlayed=false,lastBonusStreak=0,lastMeteorSpawn=0,lastMeteorCollision=0;
+let audio=null,sound=true,musicOn=false,musicTimer=null,musicStep=0,musicBpm=92,defeatPlayed=false,lastBonusStreak=0,lastMeteorSpawn=0,lastMeteorCollision=0;
 function initAudio(){try{audio??=new(window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume()}catch{}}
 function tone(freq,dur=.12,type='sine',volume=.06,when=0){if(!audio)return;try{const t=audio.currentTime+when,o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);g.gain.setValueAtTime(volume, t);g.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+dur+.02)}catch{}}
 function laserSound(){if(!sound)return;tone(900,.09,'sawtooth',.025);tone(360,.13,'triangle',.02,.035)}
@@ -27,17 +27,17 @@ function spaceNote(freq,duration,volume=.014,when=0,shape='sine',detune=0){if(!a
 function cosmicSweep(when=0){if(!audio)return;try{const t=audio.currentTime+when,o=audio.createOscillator(),g=audio.createGain(),f=audio.createBiquadFilter();o.type='sawtooth';o.frequency.setValueAtTime(110,t);o.frequency.exponentialRampToValueAtTime(850,t+1.8);f.type='lowpass';f.frequency.setValueAtTime(280,t);f.frequency.exponentialRampToValueAtTime(2100,t+1.8);g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.008,t+.4);g.gain.exponentialRampToValueAtTime(.0001,t+2.4);o.connect(f);f.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+2.5)}catch{}}
 function musicTick(){if(!musicOn||!audio)return;
 const n=musicStep++,step=60/musicBpm/2,level=Math.min(5,Math.ceil(Math.max(1,currentRound)/5));
-const roots=[55,49,65.41,58.27],root=roots[Math.floor(n/16)%4];
+const roots=[55,43.65,65.41,49],root=roots[Math.floor(n/16)%4];
 const scale=[0,7,12,15,19,24,19,15,12,7,3,12,19,15,7,3];
 const note=root*4*Math.pow(2,scale[n%16]/12);
-if(n%2===0){drum(65,.28,.045);spaceNote(root,.38,.024,0,'sawtooth')}
-if(n%4===2)drum(155,.12,.018);
-spaceNote(note,step*.95,.011,0,'triangle');
-spaceNote(note*2,step*.72,.004,.035,'sine',4);
+if(n%4===0){drum(55,.42,.08);spaceNote(root,.75,.045,0,'sawtooth');spaceNote(root/2,.9,.027,0,'sine')}
+if(n%8===4)drum(140,.15,.018);
+spaceNote(note,step*1.65,.022,0,'sine');
+spaceNote(note*1.5,step*1.2,.012,.035,'triangle',-8);
 if(n%4===3)spaceNote(1650,.075,.003,0,'square');
 if(n%8===0){spaceNote(root*2,step*9,.013,0,'sine');spaceNote(root*3,step*8,.007,.06,'triangle',-5)}
 if(n%16===8)spaceNote(root*1.5,step*7,.008,0,'sine');
-if(n%32===0)cosmicSweep();
+if(n%16===0)cosmicSweep();
 if(level>=3&&n%4===1)spaceNote(note/2,step*.65,.008,0,'sawtooth');
 if(level>=5&&n%2===1)spaceNote(note*1.5,step*.35,.004,0,'triangle');
 }
