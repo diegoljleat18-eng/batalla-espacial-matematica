@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 const app=express(); const http=createServer(app); const io=new Server(http);
 import path from 'node:path';
 import fs from 'node:fs';
+import pg from 'pg';
 import { fileURLToPath } from 'node:url';
 const publicDir=path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 app.use(express.static(publicDir));
@@ -11,11 +12,37 @@ app.get('/', (_req,res)=>res.sendFile(path.join(publicDir,'index.html')));
 app.get('/health',(_req,res)=>res.status(200).json({ok:true,service:'juegos-matematicos',games:['galaxia','math-rush'],uptime:Math.round(process.uptime())}));
 const leaderboardPath=path.join(path.dirname(fileURLToPath(import.meta.url)),'leaderboard.json');
 let leaderboard=[];
+let db=null;
+let dbReady=false;
+let persistQueue=Promise.resolve();
 try{const saved=JSON.parse(fs.readFileSync(leaderboardPath,'utf8'));if(Array.isArray(saved))leaderboard=saved.filter(p=>typeof p.name==='string'&&Number.isFinite(p.score)).slice(0,100)}catch{}
+function normalizeName(name){return String(name||'').trim().slice(0,20)}
+function sortScores(){leaderboard.sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name,'es'));leaderboard=leaderboard.slice(0,100)}
 function topThree(){return leaderboard.slice(0,3)}
 function publishTop(){io.emit('leaderboard',topThree())}
-function recordScores(players){let changed=false;for(const p of players){const name=String(p.name||'').trim().slice(0,20),score=Math.max(0,Math.floor(Number(p.score)||0));if(!name||!score)continue;const key=name.toLocaleLowerCase('es');const old=leaderboard.find(x=>x.name.toLocaleLowerCase('es')===key);if(old){if(score>old.score){old.score=score;old.name=name;changed=true}}else{leaderboard.push({name,score});changed=true}}if(changed){leaderboard.sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name,'es'));leaderboard=leaderboard.slice(0,100);try{fs.writeFileSync(leaderboardPath,JSON.stringify(leaderboard,null,2))}catch(e){console.warn('Leaderboard storage unavailable:',e.message)}publishTop()}}
-app.get('/api/leaderboard',(_req,res)=>res.json(topThree()));
+async function connectLeaderboard(){
+ if(!process.env.DATABASE_URL){console.warn('DATABASE_URL missing: leaderboard records are NOT durable across deploys');return}
+ try{
+  db=new pg.Pool({connectionString:process.env.DATABASE_URL,max:3,connectionTimeoutMillis:10000,ssl:process.env.DATABASE_URL.includes('localhost')?false:{rejectUnauthorized:false}});
+  await db.query('CREATE TABLE IF NOT EXISTS galaxy_scores (name_key TEXT PRIMARY KEY, name TEXT NOT NULL, score INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+  const result=await db.query('SELECT name, score FROM galaxy_scores ORDER BY score DESC, name ASC LIMIT 100');
+  leaderboard=result.rows;sortScores();dbReady=true;publishTop();console.log('Galaxia leaderboard connected to PostgreSQL');
+ }catch(e){console.error('Leaderboard database unavailable:',e.message);dbReady=false}
+}
+function recordScores(players){
+ let changed=false;
+ for(const p of players){
+  const name=normalizeName(p.name),score=Math.max(0,Math.floor(Number(p.score)||0));
+  if(!name||!score)continue;
+  const key=name.toLocaleLowerCase('es'),old=leaderboard.find(x=>x.name.toLocaleLowerCase('es')===key);
+  if(old){if(score>old.score){old.score=score;old.name=name;changed=true}}
+  else{leaderboard.push({name,score});changed=true}
+  if(dbReady){persistQueue=persistQueue.then(()=>db.query('INSERT INTO galaxy_scores (name_key,name,score) VALUES ($1,$2,$3) ON CONFLICT (name_key) DO UPDATE SET name=EXCLUDED.name,score=GREATEST(galaxy_scores.score,EXCLUDED.score),updated_at=NOW()',[key,name,score])).catch(e=>{console.error('Leaderboard save failed:',e.message);dbReady=false})}
+ }
+ if(changed){sortScores();if(!dbReady){try{fs.writeFileSync(leaderboardPath,JSON.stringify(leaderboard,null,2))}catch(e){console.warn('Leaderboard temporary storage unavailable:',e.message)}}publishTop()}
+}
+app.get('/api/leaderboard',(_req,res)=>res.json({scores:topThree(),persistent:dbReady}));
+connectLeaderboard();
 const rooms=new Map();
 const question=(level)=>{const max=10+level*10;let a=1+Math.floor(Math.random()*max),b=1+Math.floor(Math.random()*max),op=['+','-','×','÷'][Math.floor(Math.random()*Math.min(4,level+1))],answer;if(op==='-'){if(b>a)[a,b]=[b,a];answer=a-b;}else if(op==='×'){a=1+Math.floor(Math.random()*(5+level*2));b=1+Math.floor(Math.random()*10);answer=a*b;}else if(op==='÷'){b=1+Math.floor(Math.random()*10);answer=1+Math.floor(Math.random()*(5+level*2));a=b*answer;}else answer=a+b;return {text:`${a} ${op} ${b} = ?`,answer};};
 function state(room){return {code:room.code,started:room.started,round:room.round,total:room.total,level:Math.min(5,1+Math.floor((room.round-1)/5)),players:[...room.players.values()].map(p=>({id:p.id,name:p.name,score:p.score,shield:p.shield,correct:p.correct,streak:p.streak,answered:p.answered,ship:p.ship??0,x:p.x??450})),question:room.started?room.question.text:null,remaining:room.started?Math.max(0,Math.ceil((room.deadline-Date.now())/1000)):null};}
