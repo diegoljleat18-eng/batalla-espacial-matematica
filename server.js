@@ -3,11 +3,19 @@ import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 const app=express(); const http=createServer(app); const io=new Server(http);
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const publicDir=path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 app.use(express.static(publicDir));
 app.get('/', (_req,res)=>res.sendFile(path.join(publicDir,'index.html')));
 app.get('/health',(_req,res)=>res.status(200).json({ok:true,service:'juegos-matematicos',games:['galaxia','math-rush'],uptime:Math.round(process.uptime())}));
+const leaderboardPath=path.join(path.dirname(fileURLToPath(import.meta.url)),'leaderboard.json');
+let leaderboard=[];
+try{const saved=JSON.parse(fs.readFileSync(leaderboardPath,'utf8'));if(Array.isArray(saved))leaderboard=saved.filter(p=>typeof p.name==='string'&&Number.isFinite(p.score)).slice(0,100)}catch{}
+function topThree(){return leaderboard.slice(0,3)}
+function publishTop(){io.emit('leaderboard',topThree())}
+function recordScores(players){let changed=false;for(const p of players){const name=String(p.name||'').trim().slice(0,20),score=Math.max(0,Math.floor(Number(p.score)||0));if(!name||!score)continue;const key=name.toLocaleLowerCase('es');const old=leaderboard.find(x=>x.name.toLocaleLowerCase('es')===key);if(old){if(score>old.score){old.score=score;old.name=name;changed=true}}else{leaderboard.push({name,score});changed=true}}if(changed){leaderboard.sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name,'es'));leaderboard=leaderboard.slice(0,100);try{fs.writeFileSync(leaderboardPath,JSON.stringify(leaderboard,null,2))}catch(e){console.warn('Leaderboard storage unavailable:',e.message)}publishTop()}}
+app.get('/api/leaderboard',(_req,res)=>res.json(topThree()));
 const rooms=new Map();
 const question=(level)=>{const max=10+level*10;let a=1+Math.floor(Math.random()*max),b=1+Math.floor(Math.random()*max),op=['+','-','×','÷'][Math.floor(Math.random()*Math.min(4,level+1))],answer;if(op==='-'){if(b>a)[a,b]=[b,a];answer=a-b;}else if(op==='×'){a=1+Math.floor(Math.random()*(5+level*2));b=1+Math.floor(Math.random()*10);answer=a*b;}else if(op==='÷'){b=1+Math.floor(Math.random()*10);answer=1+Math.floor(Math.random()*(5+level*2));a=b*answer;}else answer=a+b;return {text:`${a} ${op} ${b} = ?`,answer};};
 function state(room){return {code:room.code,started:room.started,round:room.round,total:room.total,level:Math.min(5,1+Math.floor((room.round-1)/5)),players:[...room.players.values()].map(p=>({id:p.id,name:p.name,score:p.score,shield:p.shield,correct:p.correct,streak:p.streak,answered:p.answered,ship:p.ship??0,x:p.x??450})),question:room.started?room.question.text:null,remaining:room.started?Math.max(0,Math.ceil((room.deadline-Date.now())/1000)):null};}
@@ -16,6 +24,7 @@ function next(room) {
   clearTimeout(room.timer);
   if (room.round >= room.total || [...room.players.values()].every(p => p.shield <= 0)) {
     room.started = false;
+    recordScores(room.players.values());
     io.to(room.code).emit('finished', state(room));
     emit(room);
     return;
@@ -31,6 +40,7 @@ function next(room) {
   room.timer = setTimeout(() => next(room), 10000);
 }
 io.on('connection',socket=>{
+ socket.emit('leaderboard',topThree());
  socket.on('create',({name},cb)=>{name=String(name||'').trim().slice(0,20);if(!name)return cb({error:'Escribe tu nombre.'});let code;do{code=String(Math.floor(100000+Math.random()*900000));}while(rooms.has(code));const room={code,host:socket.id,players:new Map(),started:false,round:0,total:25,timer:null};rooms.set(code,room);room.players.set(socket.id,{id:socket.id,name,score:0,shield:2,correct:0,streak:0,answered:false});socket.join(code);socket.data.code=code;cb({ok:true,code,host:true});emit(room);});
  socket.on('join',({code,name},cb)=>{code=String(code||'').trim();name=String(name||'').trim().slice(0,20);const room=rooms.get(code);if(!room)return cb({error:'Sala no encontrada.'});if(room.started)return cb({error:'La partida ya comenzó.'});if(room.players.size>=5)return cb({error:'La sala está llena.'});if(!name)return cb({error:'Escribe tu nombre.'});room.players.set(socket.id,{id:socket.id,name,score:0,shield:2,correct:0,answered:false});socket.join(code);socket.data.code=code;cb({ok:true,code,host:false});emit(room);});
  socket.on('shipSelect',ship=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!p||room.started)return;p.ship=Math.max(0,Math.min(4,Math.floor(Number(ship)||0)));emit(room)});
