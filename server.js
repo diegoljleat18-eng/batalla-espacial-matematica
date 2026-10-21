@@ -11,23 +11,35 @@ app.use(express.static(publicDir));
 app.get('/', (_req,res)=>res.sendFile(path.join(publicDir,'index.html')));
 app.get('/health',(_req,res)=>res.status(200).json({ok:true,service:'juegos-matematicos',games:['galaxia','math-rush'],uptime:Math.round(process.uptime())}));
 const leaderboardPath=path.join(path.dirname(fileURLToPath(import.meta.url)),'leaderboard.json');
-let leaderboard=[];
+let leaderboard=[{name:'Lilian',score:1910},{name:'Ana Karen',score:1705},{name:'Abil',score:1295}];
 let db=null;
 let dbReady=false;
 let persistQueue=Promise.resolve();
+let connecting=false;
+let retryTimer=null;
+const scoreUpsert='INSERT INTO galaxy_scores (name_key,name,score) VALUES ($1,$2,$3) ON CONFLICT (name_key) DO UPDATE SET name=EXCLUDED.name,score=GREATEST(galaxy_scores.score,EXCLUDED.score),updated_at=NOW()';
+function retryConnection(){dbReady=false;if(!retryTimer)retryTimer=setTimeout(()=>{retryTimer=null;connectLeaderboard()},5000);retryTimer?.unref()}
+function saveSnapshot(){try{fs.writeFileSync(leaderboardPath,JSON.stringify(leaderboard,null,2))}catch(e){console.warn('Leaderboard temporary storage unavailable:',e.message)}}
 try{const saved=JSON.parse(fs.readFileSync(leaderboardPath,'utf8'));if(Array.isArray(saved))leaderboard=saved.filter(p=>typeof p.name==='string'&&Number.isFinite(p.score)).slice(0,100)}catch{}
 function normalizeName(name){return String(name||'').trim().slice(0,20)}
 function sortScores(){leaderboard.sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name,'es'));leaderboard=leaderboard.slice(0,100)}
 function topThree(){return leaderboard.slice(0,3)}
 function publishTop(){io.emit('leaderboard',topThree())}
 async function connectLeaderboard(){
+ if(connecting)return;
  if(!process.env.DATABASE_URL){console.warn('DATABASE_URL missing: leaderboard records are NOT durable across deploys');return}
+ connecting=true;
  try{
-  db=new pg.Pool({connectionString:process.env.DATABASE_URL,max:3,connectionTimeoutMillis:10000,ssl:process.env.DATABASE_URL.includes('localhost')?false:{rejectUnauthorized:false}});
+  if(!db){db=new pg.Pool({connectionString:process.env.DATABASE_URL,max:3,connectionTimeoutMillis:10000,ssl:process.env.DATABASE_URL.includes('localhost')?false:{rejectUnauthorized:false}});db.on('error',()=>retryConnection())}
   await db.query('CREATE TABLE IF NOT EXISTS galaxy_scores (name_key TEXT PRIMARY KEY, name TEXT NOT NULL, score INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
   const result=await db.query('SELECT name, score FROM galaxy_scores ORDER BY score DESC, name ASC LIMIT 100');
-  leaderboard=result.rows;sortScores();dbReady=true;publishTop();console.log('Galaxia leaderboard connected to PostgreSQL');
- }catch(e){console.error('Leaderboard database unavailable:',e.message);dbReady=false}
+  for(const p of result.rows){const old=leaderboard.find(x=>x.name.toLocaleLowerCase('es')===p.name.toLocaleLowerCase('es'));if(!old)leaderboard.push(p);else if(p.score>old.score)Object.assign(old,p)}
+  sortScores();
+  // Replay the current cache, including scores earned while connecting.
+  for(const p of leaderboard)await db.query(scoreUpsert,[p.name.toLocaleLowerCase('es'),p.name,p.score]);
+  dbReady=true;saveSnapshot();publishTop();console.log('Galaxia leaderboard connected to PostgreSQL');
+ }catch(e){console.error('Leaderboard database unavailable:',e.message);retryConnection()}
+ finally{connecting=false}
 }
 function recordScores(players){
  let changed=false;
@@ -37,9 +49,9 @@ function recordScores(players){
   const key=name.toLocaleLowerCase('es'),old=leaderboard.find(x=>x.name.toLocaleLowerCase('es')===key);
   if(old){if(score>old.score){old.score=score;old.name=name;changed=true}}
   else{leaderboard.push({name,score});changed=true}
-  if(dbReady){persistQueue=persistQueue.then(()=>db.query('INSERT INTO galaxy_scores (name_key,name,score) VALUES ($1,$2,$3) ON CONFLICT (name_key) DO UPDATE SET name=EXCLUDED.name,score=GREATEST(galaxy_scores.score,EXCLUDED.score),updated_at=NOW()',[key,name,score])).catch(e=>{console.error('Leaderboard save failed:',e.message);dbReady=false})}
+  if(dbReady){persistQueue=persistQueue.then(()=>db.query('INSERT INTO galaxy_scores (name_key,name,score) VALUES ($1,$2,$3) ON CONFLICT (name_key) DO UPDATE SET name=EXCLUDED.name,score=GREATEST(galaxy_scores.score,EXCLUDED.score),updated_at=NOW()',[key,name,score])).catch(e=>{console.error('Leaderboard save failed:',e.message);saveSnapshot();retryConnection()})}
  }
- if(changed){sortScores();if(!dbReady){try{fs.writeFileSync(leaderboardPath,JSON.stringify(leaderboard,null,2))}catch(e){console.warn('Leaderboard temporary storage unavailable:',e.message)}}publishTop()}
+ if(changed){sortScores();saveSnapshot();publishTop()}
 }
 app.get('/api/leaderboard',(_req,res)=>res.json({scores:topThree(),persistent:dbReady}));
 connectLeaderboard();
