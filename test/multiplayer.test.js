@@ -93,6 +93,32 @@ function solve(question) {
   throw new Error(`Unknown question: ${question}`);
 }
 
+test('solo arcade starts, ends after losing both lives and restarts with a clean score', async()=>{
+  const host=await connect('','websocket');
+  const other=await connect('','polling');
+  try{
+    const created=await send(host,'create',{name:'Arcade QA',solo:true});
+    assert.equal(created.ok,true);
+    assert.ok((await send(other,'join',{code:created.code,name:'Guest'})).error);
+    host.emit('start');
+    let state=await waitState(host,s=>s.started&&s.round===1);
+    assert.equal(state.continuous,true);
+    assert.equal(state.total,null);
+    assert.equal(state.solo,true);
+    assert.equal(state.players[0].x,450);
+    assert.equal((await send(host,'answer',solve(state.question)+1)).shield,1);
+    state=await waitState(host,s=>s.started&&s.round===2);
+    const finished=once(host,'finished');
+    assert.equal((await send(host,'answer',solve(state.question)+1)).shield,0);
+    const [end]=await finished;
+    assert.equal(end.started,false);
+    host.emit('start');
+    const restarted=await waitState(host,s=>s.started&&s.round===1&&s.players[0].shield===2);
+    assert.equal(restarted.players[0].correct,0);
+    assert.equal(restarted.players[0].score,0);
+  }finally{host.disconnect();other.disconnect()}
+});
+
 test('health and both game pages are served', async () => {
   const health = await fetch(`${baseURL}/health`);
   assert.equal(health.status, 200);
@@ -157,3 +183,4 @@ for (const [namespace, label] of [['', 'Galaxia'], ['/rush', 'Math Rush']]) {
     }
   });
 }
+
