@@ -116,6 +116,16 @@ test('solo arcade starts, ends after losing both lives and restarts with a clean
     const restarted=await waitState(host,s=>s.started&&s.round===1&&s.players[0].shield===2);
     assert.equal(restarted.players[0].correct,0);
     assert.equal(restarted.players[0].score,0);
+    const log=await (await fetch(`${baseURL}/api/participations`)).json();
+    const attempts=log.records.filter(r=>r.name==='Arcade QA');
+    assert.equal(log.retentionHours,24);
+    assert.equal(attempts.length,2);
+    assert.ok(attempts.every(r=>r.score===0&&r.expiresAt-r.startedAt===86400000));
+    assert.ok(attempts.some(r=>r.status==='finished'));
+    assert.ok(attempts.some(r=>r.status==='playing'));
+    const csv=await fetch(`${baseURL}/api/participations.csv`);
+    assert.match(csv.headers.get('content-disposition'),/evidencias-arcade-24h.csv/);
+    assert.match(await csv.text(),/Arcade QA/);
   }finally{host.disconnect();other.disconnect()}
 });
 

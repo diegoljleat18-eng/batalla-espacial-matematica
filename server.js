@@ -1,6 +1,7 @@
 import express from 'express';
 import { advanceArcadeRoom, arcadeLevel, ARCADE_SECONDS } from './arcade-room.js';
 import { createServer } from 'node:http';
+import { ParticipationLog, participationCSV, RETENTION_MS } from './participation-log.js';
 import { Server } from 'socket.io';
 const app=express(); const http=createServer(app); const io=new Server(http);
 import path from 'node:path';
@@ -18,6 +19,8 @@ let dbReady=false;
 let persistQueue=Promise.resolve();
 let connecting=false;
 let retryTimer=null;
+const participations=new ParticipationLog({onFailure:()=>{console.warn('Participation persistence temporarily unavailable');retryConnection()}});
+function trackParticipation(p,room,status,round=room.round){participations.update(p.participationId,{score:p.score,correct:p.correct,rounds:round,status:status||(p.shield<=0?'finished':'playing')})}
 const scoreUpsert='INSERT INTO galaxy_scores (name_key,name,score) VALUES ($1,$2,$3) ON CONFLICT (name_key) DO UPDATE SET name=EXCLUDED.name,score=GREATEST(galaxy_scores.score,EXCLUDED.score),updated_at=NOW()';
 function retryConnection(){dbReady=false;if(!retryTimer)retryTimer=setTimeout(()=>{retryTimer=null;connectLeaderboard()},5000);retryTimer?.unref()}
 function saveSnapshot(){try{fs.writeFileSync(leaderboardPath,JSON.stringify(leaderboard,null,2))}catch(e){console.warn('Leaderboard temporary storage unavailable:',e.message)}}
@@ -38,6 +41,7 @@ async function connectLeaderboard(){
   sortScores();
   // Replay the current cache, including scores earned while connecting.
   for(const p of leaderboard)await db.query(scoreUpsert,[p.name.toLocaleLowerCase('es'),p.name,p.score]);
+  await participations.connect(db);
   dbReady=true;saveSnapshot();publishTop();console.log('Galaxia leaderboard connected to PostgreSQL');
  }catch(e){console.error('Leaderboard database unavailable:',e.message);retryConnection()}
  finally{connecting=false}
@@ -55,13 +59,17 @@ function recordScores(players){
  if(changed){sortScores();saveSnapshot();publishTop()}
 }
 app.get('/api/leaderboard',(_req,res)=>res.json({scores:topThree(),persistent:dbReady}));
+app.get('/api/participations',(_req,res)=>res.set('Cache-Control','no-store').json({records:participations.list(),serverNow:Date.now(),retentionHours:RETENTION_MS/3600000,persistent:participations.ready}));
+app.get('/api/participations.csv',(_req,res)=>res.set({'Cache-Control':'no-store','Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="evidencias-arcade-24h.csv"'}).send(participationCSV(participations.list())));
 connectLeaderboard();
 const rooms=new Map();
 function state(room){return {code:room.code,started:room.started,round:room.round,total:null,continuous:true,solo:room.solo,level:arcadeLevel(room.round),players:[...room.players.values()].map(p=>({id:p.id,name:p.name,score:p.score,shield:p.shield,correct:p.correct,streak:p.streak,answered:p.answered,ship:p.ship??0,x:p.x??450})),question:room.started?room.question.text:null,remaining:room.started?Math.max(0,Math.ceil((room.deadline-Date.now())/1000)):null};}
 function emit(room){io.to(room.code).emit('state',state(room));}
 function next(room) {
   clearTimeout(room.timer);
+  const previousRound=room.round;
   const {finished,missed}=advanceArcadeRoom(room);
+  for(const p of room.players.values())trackParticipation(p,room,undefined,p.shield<=0?previousRound:room.round);
   for(const p of missed)io.to(p.id).emit('timedOut',{answer:p.answer,shield:p.shield});
   if(finished){
     recordScores(room.players.values());
@@ -79,10 +87,10 @@ io.on('connection',socket=>{
  socket.on('shipSelect',ship=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!p||room.started)return;p.ship=Math.max(0,Math.min(4,Math.floor(Number(ship)||0)));emit(room)});
  socket.on('move',x=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!room?.started||!p||p.shield<=0)return;const n=Number(x);if(!Number.isFinite(n))return;p.x=Math.max(35,Math.min(865,n));socket.to(room.code).emit('pilotMove',{id:socket.id,x:p.x})});
  socket.on('shot',x=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!room?.started||!p||p.shield<=0)return;socket.to(room.code).emit('pilotShot',{id:socket.id,x:p.x})});
- socket.on('start',()=>{const room=rooms.get(socket.data.code);if(!room||room.host!==socket.id||room.started)return;room.round=0;room.started=true;for(const p of room.players.values()){p.score=0;p.shield=2;p.correct=0;p.streak=0;p.answered=false;p.lastMeteorHit=0;p.x=(room.solo?450:150+([ ...room.players.keys()].indexOf(p.id))*150);}next(room);});
- socket.on('meteorHit',(cb)=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!room?.started||!p||p.shield<=0)return cb?.({ok:false});const now=Date.now();if(now-(p.lastMeteorHit||0)<1600)return cb?.({ok:false});p.lastMeteorHit=now;p.shield=Math.max(0,p.shield-1);p.streak=0;if(p.shield===0)p.answered=true;emit(room);cb?.({ok:true,shield:p.shield});if([...room.players.values()].every(x=>x.answered||x.shield<=0)){clearTimeout(room.timer);room.timer=setTimeout(()=>next(room),1600)}});
- socket.on('answer',(value,cb)=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!room?.started||!p||p.answered||Date.now()>room.deadline)return cb?.({error:'Respuesta fuera de tiempo o ya enviada.'});if(p.shield<=0)return cb?.({error:'Sin vidas: espera el final de la misión.'});p.answered=true;const correct=Number(value)===room.question.answer;let bonusLife=false;if(correct){p.correct++;p.streak++;if(p.streak%10===0){p.shield++;bonusLife=true;}p.score+=100+Math.max(0,Math.ceil((room.deadline-Date.now())/1000))*5;recordScores([p]);}else{p.streak=0;p.shield=Math.max(0,p.shield-1);}cb?.({correct,answer:room.question.answer,bonusLife,streak:p.streak,shield:p.shield});emit(room);if([...room.players.values()].every(x=>x.answered||x.shield<=0)){clearTimeout(room.timer);room.timer=setTimeout(()=>next(room),1600);}});
- socket.on('disconnect',()=>{const room=rooms.get(socket.data.code);if(!room)return;recordScores(room.players.values());room.players.delete(socket.id);if(room.host===socket.id){clearTimeout(room.timer);rooms.delete(room.code);io.to(room.code).emit('closed');}else emit(room);});
+ socket.on('start',()=>{const room=rooms.get(socket.data.code);if(!room||room.host!==socket.id||room.started)return;room.round=0;room.started=true;for(const p of room.players.values()){p.score=0;p.shield=2;p.correct=0;p.streak=0;p.answered=false;p.lastMeteorHit=0;p.x=(room.solo?450:150+([ ...room.players.keys()].indexOf(p.id))*150);p.participationId=participations.start(p.name,room.solo?'solo':'team');}next(room);});
+ socket.on('meteorHit',(cb)=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!room?.started||!p||p.shield<=0)return cb?.({ok:false});const now=Date.now();if(now-(p.lastMeteorHit||0)<1600)return cb?.({ok:false});p.lastMeteorHit=now;p.shield=Math.max(0,p.shield-1);p.streak=0;if(p.shield===0)p.answered=true;trackParticipation(p,room);emit(room);cb?.({ok:true,shield:p.shield});if([...room.players.values()].every(x=>x.answered||x.shield<=0)){clearTimeout(room.timer);room.timer=setTimeout(()=>next(room),1600)}});
+ socket.on('answer',(value,cb)=>{const room=rooms.get(socket.data.code),p=room?.players.get(socket.id);if(!room?.started||!p||p.answered||Date.now()>room.deadline)return cb?.({error:'Respuesta fuera de tiempo o ya enviada.'});if(p.shield<=0)return cb?.({error:'Sin vidas: espera el final de la misión.'});p.answered=true;const correct=Number(value)===room.question.answer;let bonusLife=false;if(correct){p.correct++;p.streak++;if(p.streak%10===0){p.shield++;bonusLife=true;}p.score+=100+Math.max(0,Math.ceil((room.deadline-Date.now())/1000))*5;recordScores([p]);}else{p.streak=0;p.shield=Math.max(0,p.shield-1);}trackParticipation(p,room);cb?.({correct,answer:room.question.answer,bonusLife,streak:p.streak,shield:p.shield});emit(room);if([...room.players.values()].every(x=>x.answered||x.shield<=0)){clearTimeout(room.timer);room.timer=setTimeout(()=>next(room),1600);}});
+ socket.on('disconnect',()=>{const room=rooms.get(socket.data.code);if(!room)return;recordScores(room.players.values());if(room.host===socket.id){for(const p of room.players.values())trackParticipation(p,room,'left');clearTimeout(room.timer);rooms.delete(room.code);io.to(room.code).emit('closed')}else{const p=room.players.get(socket.id);if(p)trackParticipation(p,room,'left');room.players.delete(socket.id);emit(room)}});
 });
 
 const rushIO=io.of('/rush'),rushRooms=new Map();
